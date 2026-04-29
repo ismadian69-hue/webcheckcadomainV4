@@ -1,1 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Domain Reputation Checker V4</title>
 
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+
+body{
+font-family:Arial,sans-serif;
+background:linear-gradient(135deg,#020617,#0f172a,#111827);
+color:#fff;
+padding:30px;
+min-height:100vh;
+}
+
+.container{
+max-width:1500px;
+margin:auto;
+}
+
+h1{
+text-align:center;
+margin-bottom:25px;
+font-size:34px;
+}
+
+.panel{
+background:rgba(255,255,255,.05);
+padding:22px;
+border-radius:22px;
+}
+
+textarea{
+width:100%;
+height:180px;
+background:#020617;
+color:#fff;
+border:none;
+padding:15px;
+border-radius:14px;
+resize:none;
+font-size:15px;
+}
+
+.actions{
+margin-top:15px;
+display:flex;
+gap:10px;
+flex-wrap:wrap;
+}
+
+button{
+padding:12px 18px;
+border:none;
+border-radius:12px;
+cursor:pointer;
+font-weight:bold;
+color:#fff;
+}
+
+.primary{background:#3b82f6}
+.secondary{background:#1e293b}
+
+input{
+margin-top:15px;
+width:100%;
+padding:12px;
+border:none;
+border-radius:12px;
+background:#020617;
+color:#fff;
+}
+
+.stats{
+display:grid;
+grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+gap:12px;
+margin-top:18px;
+}
+
+.card{
+background:#111827;
+padding:16px;
+border-radius:14px;
+}
+
+.card span{
+font-size:13px;
+color:#94a3b8;
+display:block;
+}
+
+.card strong{
+font-size:24px;
+}
+
+.table-wrap{
+overflow:auto;
+margin-top:20px;
+}
+
+table{
+width:100%;
+min-width:1300px;
+border-collapse:collapse;
+}
+
+th,td{
+padding:14px;
+text-align:left;
+border-bottom:1px solid rgba(255,255,255,.05);
+}
+
+th{
+color:#94a3b8;
+}
+
+tr:hover{
+background:rgba(59,130,246,.08);
+}
+
+.domain{
+color:#38bdf8;
+font-family:monospace;
+}
+
+.online{color:#22c55e;font-weight:bold}
+.offline{color:#ef4444;font-weight:bold}
+
+.badge{
+background:#1e293b;
+padding:6px 10px;
+border-radius:10px;
+display:inline-block;
+}
+
+.safe{color:#22c55e;font-weight:bold}
+.good{color:#4ade80;font-weight:bold}
+.neutral{color:#facc15;font-weight:bold}
+.warn{color:#fb923c;font-weight:bold}
+.danger{color:#ef4444;font-weight:bold}
+
+.loader{
+display:none;
+margin-top:15px;
+color:#60a5fa;
+}
+
+.footer{
+text-align:center;
+margin-top:20px;
+color:#64748b;
+font-size:13px;
+}
+</style>
+</head>
+
+<body>
+
+<div class="container">
+
+<h1>🛡️ Domain Reputation Checker V4</h1>
+
+<div class="panel">
+
+<textarea id="domains" placeholder="google.com&#10;github.com&#10;suspicious-site.xyz"></textarea>
+
+<div class="actions">
+<button class="primary" onclick="startCheck()">Check</button>
+<button class="secondary" onclick="clearAll()">Clear</button>
+<button class="secondary" onclick="downloadCSV()">CSV</button>
+</div>
+
+<div class="loader" id="loader">Scanning domains...</div>
+
+<input id="search" placeholder="Search..." onkeyup="filterRows()">
+
+<div class="stats">
+
+<div class="card">
+<span>Total</span>
+<strong id="totalCount">0</strong>
+</div>
+
+<div class="card">
+<span>Online</span>
+<strong id="onlineCount">0</strong>
+</div>
+
+<div class="card">
+<span>Safe</span>
+<strong id="safeCount">0</strong>
+</div>
+
+<div class="card">
+<span>Dangerous</span>
+<strong id="dangerCount">0</strong>
+</div>
+
+</div>
+
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Domain</th>
+<th>Status</th>
+<th>Category</th>
+<th>SSL</th>
+<th>Score</th>
+<th>Reputation</th>
+<th>Title</th>
+</tr>
+</thead>
+
+<tbody id="results"></tbody>
+</table>
+</div>
+
+</div>
+
+<div class="footer">
+Powered by Vercel API
+</div>
+
+</div>
+
+<script>
+let resultsData=[];
+
+function parseDomains(){
+return domains.value
+.split(/[\n,]+/)
+.map(x=>x.trim())
+.filter(Boolean);
+}
+
+async function checkDomain(domain){
+try{
+let res=await fetch('/api/check?domain='+encodeURIComponent(domain));
+let data=await res.json();
+
+return{
+domain,
+status:data.status||"Offline",
+category:data.category||"-",
+ssl:data.ssl||"-",
+score:data.score||0,
+reputation:data.reputation||"Unknown",
+title:data.title||"-"
+};
+
+}catch{
+return{
+domain,
+status:"Offline",
+category:"-",
+ssl:"-",
+score:0,
+reputation:"Unknown",
+title:"-"
+};
+}
+}
+
+async function startCheck(){
+
+let list=parseDomains();
+
+if(list.length===0){
+alert("Enter domains first");
+return;
+}
+
+resultsData=[];
+results.innerHTML="";
+loader.style.display="block";
+
+for(let d of list){
+
+let row=await checkDomain(d);
+
+resultsData.push(row);
+
+results.innerHTML+=makeRow(row);
+
+updateStats();
+
+await delay(180);
+}
+
+loader.style.display="none";
+}
+
+function repClass(rep){
+if(rep==="Safe") return "safe";
+if(rep==="Trustworthy") return "good";
+if(rep==="Neutral") return "neutral";
+if(rep==="Suspicious") return "warn";
+return "danger";
+}
+
+function makeRow(r){
+return `
+<tr>
+<td class="domain">${r.domain}</td>
+<td class="${r.status==='Online'?'online':'offline'}">${r.status}</td>
+<td><span class="badge">${r.category}</span></td>
+<td>${r.ssl}</td>
+<td>${r.score}/100</td>
+<td class="${repClass(r.reputation)}">${r.reputation}</td>
+<td>${r.title}</td>
+</tr>
+`;
+}
+
+function updateStats(){
+
+totalCount.textContent=resultsData.length;
+
+onlineCount.textContent=
+resultsData.filter(x=>x.status==="Online").length;
+
+safeCount.textContent=
+resultsData.filter(x=>x.reputation==="Safe"||x.reputation==="Trustworthy").length;
+
+dangerCount.textContent=
+resultsData.filter(x=>x.reputation==="Dangerous").length;
+}
+
+function clearAll(){
+domains.value="";
+search.value="";
+results.innerHTML="";
+resultsData=[];
+updateStats();
+}
+
+function filterRows(){
+
+let q=search.value.toLowerCase();
+
+let rows=document.querySelectorAll("#results tr");
+
+rows.forEach((row,i)=>{
+
+let r=resultsData[i];
+
+let txt=(r.domain+" "+r.category+" "+r.reputation+" "+r.title).toLowerCase();
+
+row.style.display=txt.includes(q)?"":"none";
+
+});
+}
+
+function downloadCSV(){
+
+if(resultsData.length===0) return;
+
+let csv="Domain,Status,Category,SSL,Score,Reputation,Title\n";
+
+resultsData.forEach(r=>{
+csv+=`${r.domain},${r.status},${r.category},${r.ssl},${r.score},${r.reputation},"${r.title}"\n`;
+});
+
+let blob=new Blob([csv],{type:'text/csv'});
+let url=URL.createObjectURL(blob);
+
+let a=document.createElement("a");
+a.href=url;
+a.download="reputation-results.csv";
+a.click();
+
+URL.revokeObjectURL(url);
+}
+
+function delay(ms){
+return new Promise(r=>setTimeout(r,ms));
+}
+</script>
+
+</body>
+</html>
