@@ -149,8 +149,12 @@ export default async function handler(req, res) {
 
     /* REPUTATION ENGINE */
 
-    let score = 50;
-
+    let score = 40;
+   if(status === "Offline") score -= 20;
+   if(d.endsWith(".xyz")) score -= 15;
+   if(d.endsWith(".top")) score -= 20;
+    if(d.endsWith(".click")) score -= 20;
+    if(d.endsWith(".shop")) score -= 5;
     if (status === "Online") score += 20;
     if (ssl === "Yes") score += 10;
     if (title !== "-") score += 10;
