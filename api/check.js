@@ -1,206 +1,237 @@
+import axios from "axios";
+
 export default async function handler(req, res) {
+  const domain = (req.query.domain || "").trim().toLowerCase();
+
+  if (!domain) {
+    return res.status(400).json({
+      status: "Error",
+      category: "-",
+      score: 0,
+      reputation: "Unknown",
+      ssl: "-",
+      title: "-"
+    });
+  }
+
   try {
-    const { domain } = req.query;
-
-    if (!domain) {
-      return res.status(400).json({ error: "Missing domain" });
-    }
-
-    const cleanDomain = domain
-      .toLowerCase()
-      .replace(/^https?:\/\//, "")
-      .split("/")[0]
-      .trim();
-
     const apiKey = process.env.VT_API_KEY;
 
-    if (!apiKey) {
-      return res.status(500).json({
-        error: "Missing VirusTotal API key"
-      });
-    }
-
-    /* ==========================
-       VIRUSTOTAL REQUEST
-    ========================== */
-
-    const response = await fetch(
-      `https://www.virustotal.com/api/v3/domains/${cleanDomain}`,
-      {
-        headers: {
-          "x-apikey": apiKey
-        }
-      }
-    );
-
-    if (!response.ok) {
-      return res.status(response.status).json({
-        error: "VirusTotal request failed"
-      });
-    }
-
-    const json = await response.json();
-
-    const attr = json.data.attributes || {};
-    const stats = attr.last_analysis_stats || {};
-
-    const harmless = stats.harmless || 0;
-    const malicious = stats.malicious || 0;
-    const suspicious = stats.suspicious || 0;
-    const undetected = stats.undetected || 0;
-    const timeout = stats.timeout || 0;
-
-    /* ==========================
-       CATEGORY
-    ========================== */
-
+    let score = 50;
+    let status = "Online";
+    let ssl = "-";
+    let title = "-";
     let category = "Website";
+    let reputation = "Neutral";
 
-    if (attr.categories) {
-      const vals = Object.values(attr.categories);
-      if (vals.length) category = vals[0];
+    // ---------- VIRUSTOTAL ----------
+    if (apiKey) {
+      try {
+        const id = Buffer.from(domain).toString("base64").replace(/=/g, "");
+
+        const vt = await axios.get(
+          `https://www.virustotal.com/api/v3/domains/${domain}`,
+          {
+            headers: {
+              "x-apikey": apiKey
+            },
+            timeout: 8000
+          }
+        );
+
+        const data = vt.data.data.attributes || {};
+
+        const stats = data.last_analysis_stats || {};
+        const harmless = stats.harmless || 0;
+        const malicious = stats.malicious || 0;
+        const suspicious = stats.suspicious || 0;
+        const undetected = stats.undetected || 0;
+
+        const total = harmless + malicious + suspicious + undetected;
+
+        if (total > 0) {
+          score = Math.round((harmless / total) * 100);
+        }
+
+        if (malicious > 0) score -= malicious * 15;
+        if (suspicious > 0) score -= suspicious * 8;
+
+        if (score < 0) score = 0;
+        if (score > 100) score = 100;
+
+        if (data.categories) {
+          const vals = Object.values(data.categories);
+          if (vals.length) category = vals[0];
+        }
+
+        if (data.last_https_certificate) ssl = "Yes";
+
+      } catch (e) {}
     }
 
-    const cat = category.toLowerCase();
+    // ---------- TITLE ----------
+    try {
+      const page = await axios.get(`https://${domain}`, {
+        timeout: 6000,
+        maxRedirects: 5
+      });
 
-    /* ==========================
-       DOMAIN AGE
-    ========================== */
+      const html = page.data || "";
 
-    let ageMonths = 0;
+      const match = html.match(/<title>(.*?)<\/title>/i);
+      if (match) title = match[1].trim().slice(0, 70);
 
-    if (attr.creation_date) {
-      const created = new Date(attr.creation_date * 1000);
-      const now = new Date();
+      status = "Online";
+      ssl = "Yes";
 
-      ageMonths =
-        (now.getFullYear() - created.getFullYear()) * 12 +
-        (now.getMonth() - created.getMonth());
+    } catch (e) {
+      try {
+        const page2 = await axios.get(`http://${domain}`, {
+          timeout: 6000,
+          maxRedirects: 5
+        });
+
+        const html2 = page2.data || "";
+        const match2 = html2.match(/<title>(.*?)<\/title>/i);
+        if (match2) title = match2[1].trim().slice(0, 70);
+
+        status = "Online";
+
+      } catch (e2) {
+        status = "Offline";
+      }
     }
 
-    /* ==========================
-       POPULARITY
-    ========================== */
+    // ---------- SMART CATEGORY ----------
+    category = smartCategory(domain, title, category);
 
-    const popularity = harmless + undetected;
+    // ---------- EXTRA SCORE ----------
+    if (status === "Online") score += 10;
+    if (ssl === "Yes") score += 10;
+    if (title !== "-") score += 5;
 
-    /* ==========================
-       HYBRID SCORE ENGINE
-    ========================== */
-
-    let score = 100;
-
-    /* VirusTotal signals */
-    score -= malicious * 22;
-    score -= suspicious * 12;
-    score -= timeout * 4;
-
-    /* Age bonus */
-    if (ageMonths >= 120) score += 10;
-    else if (ageMonths >= 60) score += 7;
-    else if (ageMonths >= 24) score += 4;
-    else if (ageMonths <= 6) score -= 15;
-    else if (ageMonths <= 12) score -= 8;
-
-    /* Popularity */
-    if (popularity >= 70) score += 8;
-    else if (popularity >= 30) score += 4;
-    else if (popularity <= 5) score -= 10;
-
-    /* Risk categories */
+    // risky TLD
     if (
-      cat.includes("gambling") ||
-      cat.includes("adult") ||
-      cat.includes("porn") ||
-      cat.includes("phishing") ||
-      cat.includes("malware")
-    ) score -= 20;
+      domain.endsWith(".xyz") ||
+      domain.endsWith(".top") ||
+      domain.endsWith(".click") ||
+      domain.endsWith(".live")
+    ) {
+      score -= 20;
+    }
 
-    if (
-      cat.includes("bank") ||
-      cat.includes("business") ||
-      cat.includes("news") ||
-      cat.includes("education")
-    ) score += 4;
+    // risky keywords
+    const risky = [
+      "hack",
+      "crack",
+      "adult",
+      "casino",
+      "bet",
+      "porn",
+      "dark",
+      "fraud",
+      "phish"
+    ];
 
-    /* Domain patterns */
-    if (
-      cleanDomain.endsWith(".xyz") ||
-      cleanDomain.endsWith(".top") ||
-      cleanDomain.endsWith(".click")
-    ) score -= 12;
+    for (const word of risky) {
+      if (domain.includes(word)) score -= 15;
+    }
 
-    if (cleanDomain.endsWith(".com")) score += 3;
-
-    if (cleanDomain.length > 28) score -= 6;
-
-    if (/[0-9]{4,}/.test(cleanDomain)) score -= 10;
-
-    /* Clamp */
-
-    if (score > 100) score = 100;
     if (score < 0) score = 0;
+    if (score > 100) score = 100;
 
-    /* ==========================
-       REPUTATION LABEL
-    ========================== */
-
-    let reputation = "Safe";
-
+    // ---------- REPUTATION ----------
     if (score >= 90) reputation = "Excellent";
     else if (score >= 75) reputation = "Trustworthy";
-    else if (score >= 55) reputation = "Low Risk";
+    else if (score >= 55) reputation = "Neutral";
     else if (score >= 35) reputation = "Suspicious";
     else reputation = "Dangerous";
 
-    /* ==========================
-       DATE FORMAT
-    ========================== */
-
-    const creationDate = attr.creation_date
-      ? new Date(attr.creation_date * 1000)
-          .toISOString()
-          .slice(0, 10)
-      : "-";
-
-    const lastAnalysis = attr.last_analysis_date
-      ? new Date(attr.last_analysis_date * 1000)
-          .toISOString()
-          .replace("T", " ")
-          .slice(0, 19)
-      : "-";
-
-    /* ==========================
-       RESPONSE
-    ========================== */
-
     return res.status(200).json({
-      domain: cleanDomain,
-      status: "Online",
-
+      domain,
+      status,
       category,
-      reputation,
+      ssl,
       score,
-
-      age_months: ageMonths,
-      creation_date: creationDate,
-      popularity,
-
-      detections: {
-        harmless,
-        malicious,
-        suspicious,
-        undetected,
-        timeout
-      },
-
-      registrar: attr.registrar || "-",
-      last_analysis: lastAnalysis
+      reputation,
+      title
     });
 
-  } catch (error) {
-    return res.status(500).json({
-      error: "Internal server error"
+  } catch (err) {
+    return res.status(200).json({
+      domain,
+      status: "Offline",
+      category: "Website",
+      ssl: "-",
+      score: 0,
+      reputation: "Dangerous",
+      title: "-"
     });
   }
+}
+
+// ---------- CATEGORY ENGINE ----------
+function smartCategory(domain, title, oldCat) {
+  const txt = (domain + " " + title + " " + oldCat).toLowerCase();
+
+  if (txt.includes("google")) return "Search Engine";
+  if (txt.includes("bing")) return "Search Engine";
+  if (txt.includes("yahoo")) return "Search Engine";
+
+  if (
+    txt.includes("facebook") ||
+    txt.includes("instagram") ||
+    txt.includes("twitter") ||
+    txt.includes("linkedin") ||
+    txt.includes("tiktok")
+  ) return "Social Media";
+
+  if (
+    txt.includes("youtube") ||
+    txt.includes("netflix") ||
+    txt.includes("spotify")
+  ) return "Streaming";
+
+  if (
+    txt.includes("github") ||
+    txt.includes("gitlab") ||
+    txt.includes("developer") ||
+    txt.includes("code")
+  ) return "Developer";
+
+  if (
+    txt.includes("bank") ||
+    txt.includes("paypal") ||
+    txt.includes("finance") ||
+    txt.includes("crypto")
+  ) return "Finance";
+
+  if (
+    txt.includes("amazon") ||
+    txt.includes("shop") ||
+    txt.includes("store") ||
+    txt.includes("ebay")
+  ) return "Ecommerce";
+
+  if (
+    txt.includes("news") ||
+    txt.includes("reuters") ||
+    txt.includes("cnn") ||
+    txt.includes("bbc")
+  ) return "News";
+
+  if (
+    txt.includes("game") ||
+    txt.includes("steam") ||
+    txt.includes("playstation")
+  ) return "Gaming";
+
+  if (
+    txt.includes("university") ||
+    txt.includes("school") ||
+    txt.includes("academy") ||
+    txt.includes("edu")
+  ) return "Education";
+
+  return oldCat || "Website";
 }
