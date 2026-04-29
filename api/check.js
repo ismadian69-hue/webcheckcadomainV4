@@ -15,44 +15,60 @@ export default async function handler(req, res) {
 
     const cleanDomain = domain
       .toLowerCase()
-      .replace("https://", "")
-      .replace("http://", "")
+      .replace(/^https?:\/\//, "")
       .split("/")[0]
       .trim();
-
-    const url = "https://" + cleanDomain;
 
     let status = "Offline";
     let ssl = "No";
     let title = "-";
     let category = "Website";
 
-    try {
-      const response = await fetch(url, {
-        redirect: "follow",
-        headers: {
-          "user-agent": "Mozilla/5.0"
-        }
-      });
+    async function tryFetch(url) {
+      try {
+        const r = await fetch(url, {
+          method: "GET",
+          redirect: "follow",
+          headers: {
+            "user-agent": "Mozilla/5.0"
+          }
+        });
 
-      const html = await response.text();
+        return r;
+      } catch {
+        return null;
+      }
+    }
 
-      status = "Online";
-      ssl = "Yes";
+    let response =
+      await tryFetch("https://" + cleanDomain) ||
+      await tryFetch("http://" + cleanDomain);
 
-      const match = html.match(/<title[^>]*>(.*?)<\/title>/i);
-
-      if (match && match[1]) {
-        title = match[1]
-          .replace(/\s+/g, " ")
-          .trim()
-          .slice(0, 70);
+    if (response) {
+      if (
+        response.status < 500 ||
+        response.status === 403 ||
+        response.status === 401
+      ) {
+        status = "Online";
       }
 
-    } catch (e) {
-      status = "Offline";
-      ssl = "No";
-      title = "-";
+      if (response.url.startsWith("https://")) {
+        ssl = "Yes";
+      }
+
+      try {
+        const html = await response.text();
+
+        const match = html.match(/<title[^>]*>(.*?)<\/title>/i);
+
+        if (match && match[1]) {
+          title = match[1]
+            .replace(/\s+/g, " ")
+            .trim()
+            .slice(0, 70);
+        }
+      } catch {}
     }
 
     const d = cleanDomain;
@@ -62,8 +78,8 @@ export default async function handler(req, res) {
 
     if (
       d.includes("google") ||
-      d.includes("chrome") ||
       d.includes("bing") ||
+      d.includes("yahoo") ||
       t.includes("google")
     ) category = "Search Engine";
 
@@ -71,23 +87,22 @@ export default async function handler(req, res) {
       d.includes("facebook") ||
       d.includes("instagram") ||
       d.includes("twitter") ||
-      d.includes("x.com") ||
       d.includes("linkedin") ||
       d.includes("t.co")
     ) category = "Social Media";
 
     else if (
       d.includes("youtube") ||
-      d.includes("netflix") ||
       d.includes("spotify") ||
+      d.includes("netflix") ||
       d.includes("twitch")
     ) category = "Streaming";
 
     else if (
       d.includes("amazon") ||
       d.includes("ebay") ||
-      d.includes("shop") ||
-      d.includes("etsy")
+      d.includes("etsy") ||
+      d.includes("shop")
     ) category = "Ecommerce";
 
     else if (
@@ -97,8 +112,8 @@ export default async function handler(req, res) {
     ) category = "Developer";
 
     else if (
-      d.includes("dropbox") ||
       d.includes("mediafire") ||
+      d.includes("dropbox") ||
       d.includes("mega") ||
       d.includes("drive")
     ) category = "Cloud Storage";
@@ -149,13 +164,9 @@ export default async function handler(req, res) {
 
     /* REPUTATION ENGINE */
 
-    let score = 40;
-   if(status === "Offline") score -= 20;
-   if(d.endsWith(".xyz")) score -= 15;
-   if(d.endsWith(".top")) score -= 20;
-    if(d.endsWith(".click")) score -= 20;
-    if(d.endsWith(".shop")) score -= 5;
-    if (status === "Online") score += 20;
+    let score = 45;
+
+    if (status === "Online") score += 25;
     if (ssl === "Yes") score += 10;
     if (title !== "-") score += 10;
 
@@ -173,15 +184,19 @@ export default async function handler(req, res) {
     ) score += 10;
 
     if (
-      d.includes("free-money") ||
       d.includes("hack") ||
+      d.includes("free-money") ||
       d.includes("casino") ||
       d.includes("xxx")
     ) score -= 30;
 
-    if (d.length > 28) score -= 10;
+    if (d.length > 28) score -= 8;
 
     if (/[0-9]{4,}/.test(d)) score -= 15;
+
+    if (d.endsWith(".xyz")) score -= 15;
+    if (d.endsWith(".top")) score -= 20;
+    if (d.endsWith(".click")) score -= 20;
 
     if (score > 100) score = 100;
     if (score < 0) score = 0;
