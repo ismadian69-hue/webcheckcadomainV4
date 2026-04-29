@@ -1,5 +1,3 @@
-import axios from "axios";
-
 export default async function handler(req,res){
 
 const domain=(req.query.domain||"").trim().toLowerCase();
@@ -15,32 +13,37 @@ title:"-"
 });
 }
 
-let status="Online";
-let category="Website";
+let status="Offline";
 let ssl="-";
-let score=80;
-let reputation="Trustworthy";
 let title="-";
+let score=0;
+let reputation="Unknown";
+let category="Website";
 
 try{
 
 try{
-const r=await axios.get("https://"+domain,{timeout:5000});
+const r=await fetch("https://"+domain,{
+method:"GET",
+redirect:"follow"
+});
+
+status="Online";
 ssl="Yes";
+score=90;
 
-const m=(r.data||"").match(/<title>(.*?)<\/title>/i);
+const html=await r.text();
+
+const m=html.match(/<title>(.*?)<\/title>/i);
 if(m) title=m[1].slice(0,60);
 
 }catch{
 
 try{
-await axios.get("http://"+domain,{timeout:5000});
+await fetch("http://"+domain);
 status="Online";
-}catch{
-status="Offline";
-score=0;
-reputation="Unknown";
-}
+score=80;
+}catch{}
 
 }
 
@@ -51,14 +54,10 @@ else if(domain.includes("youtube")) category="Streaming";
 else if(domain.includes("bank")) category="Finance";
 else if(domain.includes("amazon")) category="Ecommerce";
 
-if(status==="Offline"){
-score=0;
-reputation="Unknown";
-}
-else if(score>=90) reputation="Excellent";
+if(score>=90) reputation="Excellent";
 else if(score>=75) reputation="Trustworthy";
 else if(score>=50) reputation="Neutral";
-else reputation="Suspicious";
+else if(score>0) reputation="Suspicious";
 
 return res.status(200).json({
 domain,
