@@ -1,86 +1,133 @@
-export default async function handler(req,res){
+async function checkDomain(domain) {
+  try {
+    const cleanDomain = domain.trim().toLowerCase();
+    if (!cleanDomain) return null;
 
-const domain=(req.query.domain||"").trim().toLowerCase();
+    // ===== DEFAULT VALUES =====
+    let status = "Offline";
+    let category = "Website";
+    let ssl = "-";
+    let score = 0;
+    let reputation = "Unknown";
+    let title = "-";
 
-if(!domain){
-return res.status(200).json({
-status:"Offline",
-category:"-",
-ssl:"-",
-score:0,
-reputation:"Unknown",
-title:"-"
-});
-}
+    // =========================
+    // 1. CHECK WEBSITE ONLINE
+    // =========================
+    let siteData = null;
 
-let status="Offline";
-let ssl="-";
-let title="-";
-let score=0;
-let reputation="Unknown";
-let category="Website";
+    try {
+      const res = await fetch(`https://api.allorigins.win/raw?url=https://${cleanDomain}`, {
+        method: "GET"
+      });
 
-try{
+      if (res.ok) {
+        const html = await res.text();
+        status = "Online";
 
-try{
-const r=await fetch("https://"+domain,{
-method:"GET",
-redirect:"follow"
-});
+        const titleMatch = html.match(/<title>(.*?)<\/title>/i);
+        if (titleMatch) title = titleMatch[1].trim();
 
-status="Online";
-ssl="Yes";
-score=90;
+        siteData = html;
+      }
+    } catch (e) {}
 
-const html=await r.text();
+    // =========================
+    // 2. SSL CHECK
+    // =========================
+    try {
+      const sslRes = await fetch(`https://${cleanDomain}`, { mode: "no-cors" });
+      ssl = "Yes";
+    } catch {
+      ssl = "-";
+    }
 
-const m=html.match(/<title>(.*?)<\/title>/i);
-if(m) title=m[1].slice(0,60);
+    // =========================
+    // 3. CATEGORY SMART DETECT
+    // =========================
+    const text = `${cleanDomain} ${title}`.toLowerCase();
 
-}catch{
+    if (
+      text.includes("google") ||
+      text.includes("bing") ||
+      text.includes("yahoo")
+    ) category = "Search Engine";
 
-try{
-await fetch("http://"+domain);
-status="Online";
-score=80;
-}catch{}
+    else if (
+      text.includes("github") ||
+      text.includes("gitlab") ||
+      text.includes("developer")
+    ) category = "Developer";
 
-}
+    else if (
+      text.includes("facebook") ||
+      text.includes("instagram") ||
+      text.includes("twitter") ||
+      text.includes("tiktok")
+    ) category = "Social Media";
 
-if(domain.includes("google")) category="Search Engine";
-else if(domain.includes("github")) category="Developer";
-else if(domain.includes("facebook")) category="Social Media";
-else if(domain.includes("youtube")) category="Streaming";
-else if(domain.includes("bank")) category="Finance";
-else if(domain.includes("amazon")) category="Ecommerce";
+    else if (
+      text.includes("amazon") ||
+      text.includes("ebay") ||
+      text.includes("shop") ||
+      text.includes("store")
+    ) category = "Ecommerce";
 
-if(score>=90) reputation="Excellent";
-else if(score>=75) reputation="Trustworthy";
-else if(score>=50) reputation="Neutral";
-else if(score>0) reputation="Suspicious";
+    else if (
+      text.includes("bank") ||
+      text.includes("paypal") ||
+      text.includes("visa")
+    ) category = "Finance";
 
-return res.status(200).json({
-domain,
-status,
-category,
-ssl,
-score,
-reputation,
-title
-});
+    else if (
+      text.includes("youtube") ||
+      text.includes("netflix") ||
+      text.includes("spotify")
+    ) category = "Entertainment";
 
-}catch(e){
+    else if (
+      text.includes("news") ||
+      text.includes("cnn") ||
+      text.includes("bbc")
+    ) category = "News";
 
-return res.status(200).json({
-domain,
-status:"Offline",
-category:"-",
-ssl:"-",
-score:0,
-reputation:"Unknown",
-title:"-"
-});
+    // =========================
+    // 4. SCORE SYSTEM
+    // =========================
+    if (status === "Online") score += 40;
+    if (ssl === "Yes") score += 20;
+    if (title !== "-") score += 20;
+    if (category !== "Website") score += 20;
 
-}
+    if (score > 100) score = 100;
 
+    // =========================
+    // 5. REPUTATION
+    // =========================
+    if (score >= 90) reputation = "Excellent";
+    else if (score >= 75) reputation = "Trustworthy";
+    else if (score >= 50) reputation = "Suspicious";
+    else reputation = "Dangerous";
+
+    return {
+      domain: cleanDomain,
+      status,
+      category,
+      ssl,
+      score,
+      reputation,
+      title
+    };
+
+  } catch (error) {
+    return {
+      domain,
+      status: "Offline",
+      category: "-",
+      ssl: "-",
+      score: 0,
+      reputation: "Unknown",
+      title: "-"
+    };
+  }
 }
